@@ -1,0 +1,5 @@
+streamlit
+openai>=1.0.0
+pandas
+uuid
+anthropic>=0.5.0 
