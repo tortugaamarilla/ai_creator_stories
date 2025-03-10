@@ -3,6 +3,7 @@ import openai
 import pandas as pd
 import uuid
 from datetime import datetime
+import json
 
 # Настройка заголовка и описания приложения
 st.title("Генератор историй с помощью ChatGPT")
@@ -33,9 +34,37 @@ if 'story_history' not in st.session_state:
 if 'selected_stories' not in st.session_state:
     st.session_state.selected_stories = []
 
+# Инициализация сессии для хранения последнего API запроса
+if 'last_api_request' not in st.session_state:
+    st.session_state.last_api_request = ""
+
 # Функция для генерации истории
 def generate_story(user_prompt, system_prompt, model, temperature):
     try:
+        # Создание структуры запроса для предварительного просмотра
+        if model == "o1":
+            api_request = {
+                "model": "claude-3-opus-20240229",
+                "max_tokens": 4000,
+                "system": system_prompt,
+                "messages": [
+                    {"role": "user", "content": user_prompt}
+                ]
+            }
+        else:
+            api_request = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": temperature
+            }
+            
+        # Сохраняем запрос для отображения
+        st.session_state.last_api_request = json.dumps(api_request, indent=2, ensure_ascii=False)
+            
+        # Выполнение реального запроса
         if model == "o1":
             # Проверка наличия ключа Anthropic
             if not has_anthropic_key:
@@ -77,7 +106,8 @@ def generate_story(user_prompt, system_prompt, model, temperature):
             "system_prompt": system_prompt,
             "model": model,
             "temperature": temperature if model != "o1" else None,
-            "content": content
+            "content": content,
+            "api_request": st.session_state.last_api_request  # Сохраняем запрос в истории
         }
         
         st.session_state.story_history.append(story_data)
@@ -97,16 +127,8 @@ def generate_revision(user_prompt, system_prompt, model, temperature, revision_p
             
         revision_message = f"Исправь историю согласно следующим требованиям: {revision_prompt}"
         
+        # Создание структуры запроса для предварительного просмотра
         if model == "o1":
-            # Проверка наличия ключа Anthropic
-            if not has_anthropic_key:
-                st.error("API ключ Anthropic не найден. Пожалуйста, укажите его в .streamlit/secrets.toml или в секретах streamlit.io")
-                return None
-                
-            # Для модели Claude (o1) от Anthropic
-            from anthropic import Anthropic
-            client = Anthropic(api_key=st.secrets["ANTROPIC_API_KEY"])
-            
             # Преобразование сообщений в формат для Anthropic
             anthropic_messages = []
             for i in range(0, len(context_messages), 2):
@@ -116,6 +138,37 @@ def generate_revision(user_prompt, system_prompt, model, temperature, revision_p
             
             # Добавление запроса на правку
             anthropic_messages.append({"role": "user", "content": revision_message})
+            
+            api_request = {
+                "model": "claude-3-opus-20240229",
+                "max_tokens": 4000,
+                "system": system_prompt,
+                "messages": anthropic_messages
+            }
+        else:
+            all_messages = [{"role": "system", "content": system_prompt}]
+            all_messages.extend(context_messages)
+            all_messages.append({"role": "user", "content": revision_message})
+            
+            api_request = {
+                "model": model,
+                "messages": all_messages,
+                "temperature": temperature
+            }
+            
+        # Сохраняем запрос для отображения
+        st.session_state.last_api_request = json.dumps(api_request, indent=2, ensure_ascii=False)
+            
+        # Выполнение реального запроса
+        if model == "o1":
+            # Проверка наличия ключа Anthropic
+            if not has_anthropic_key:
+                st.error("API ключ Anthropic не найден. Пожалуйста, укажите его в .streamlit/secrets.toml или в секретах streamlit.io")
+                return None
+                
+            # Для модели Claude (o1) от Anthropic
+            from anthropic import Anthropic
+            client = Anthropic(api_key=st.secrets["ANTROPIC_API_KEY"])
             
             response = client.messages.create(
                 model="claude-3-opus-20240229",  # o1 соответствует Claude-3-Opus
@@ -127,10 +180,6 @@ def generate_revision(user_prompt, system_prompt, model, temperature, revision_p
         else:
             # Для моделей OpenAI
             client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-            
-            all_messages = [{"role": "system", "content": system_prompt}]
-            all_messages.extend(context_messages)
-            all_messages.append({"role": "user", "content": revision_message})
             
             response = client.chat.completions.create(
                 model=model,
@@ -150,7 +199,8 @@ def generate_revision(user_prompt, system_prompt, model, temperature, revision_p
             "model": model,
             "temperature": temperature if model != "o1" else None,
             "content": content,
-            "based_on": [s["id"] for s in selected_stories]
+            "based_on": [s["id"] for s in selected_stories],
+            "api_request": st.session_state.last_api_request  # Сохраняем запрос в истории
         }
         
         st.session_state.story_history.append(story_data)
@@ -198,6 +248,32 @@ with tabs[0]:
         height=150
     )
     
+    # Предварительный просмотр API запроса
+    if st.checkbox("Показать API запрос", key="show_preview_generate"):
+        preview_api_request = {}
+        
+        if model == "o1":
+            preview_api_request = {
+                "model": "claude-3-opus-20240229",
+                "max_tokens": 4000,
+                "system": system_prompt,
+                "messages": [
+                    {"role": "user", "content": user_prompt}
+                ]
+            }
+        else:
+            preview_api_request = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": temperature
+            }
+            
+        st.subheader("Предварительный просмотр API запроса:")
+        st.code(json.dumps(preview_api_request, indent=2, ensure_ascii=False), language="json")
+    
     if st.button("Сгенерировать историю"):
         with st.spinner("Генерация истории..."):
             story_data = generate_story(user_prompt, system_prompt, model, temperature)
@@ -205,6 +281,11 @@ with tabs[0]:
                 st.success("История успешно сгенерирована!")
                 st.markdown("### Результат:")
                 st.markdown(story_data["content"])
+                
+                # Отображение отправленного API запроса
+                if st.checkbox("Показать отправленный API запрос", key="show_sent_generate"):
+                    st.subheader("Отправленный API запрос:")
+                    st.code(st.session_state.last_api_request, language="json")
 
 with tabs[1]:
     st.header("История генераций")
@@ -219,6 +300,11 @@ with tabs[1]:
                 st.markdown(f"**Задание:** {story['user_prompt']}")
                 st.markdown("### Содержание:")
                 st.markdown(story['content'])
+                
+                # Отображение API запроса в истории, если доступен
+                if "api_request" in story and st.checkbox("Показать API запрос", key=f"show_api_{story['id']}"):
+                    st.subheader("API запрос:")
+                    st.code(story["api_request"], language="json")
                 
                 # Чекбокс для выбора истории для правок
                 if st.checkbox("Выбрать для правки", key=f"select_{story['id']}"):
@@ -252,6 +338,48 @@ with tabs[2]:
             key="revision_prompt"
         )
         
+        # Подготовка сообщений для предварительного просмотра API запроса
+        if st.checkbox("Показать API запрос", key="show_preview_revision"):
+            context_messages = []
+            for story in st.session_state.selected_stories:
+                context_messages.append({"role": "user", "content": story["user_prompt"]})
+                context_messages.append({"role": "assistant", "content": story["content"]})
+                
+            revision_message = f"Исправь историю согласно следующим требованиям: {revision_prompt}"
+            
+            preview_api_request = {}
+            
+            if model == "o1":
+                # Преобразование сообщений в формат для Anthropic
+                anthropic_messages = []
+                for i in range(0, len(context_messages), 2):
+                    if i+1 < len(context_messages):
+                        anthropic_messages.append({"role": "user", "content": context_messages[i]["content"]})
+                        anthropic_messages.append({"role": "assistant", "content": context_messages[i+1]["content"]})
+                
+                # Добавление запроса на правку
+                anthropic_messages.append({"role": "user", "content": revision_message})
+                
+                preview_api_request = {
+                    "model": "claude-3-opus-20240229",
+                    "max_tokens": 4000,
+                    "system": system_prompt_revision,
+                    "messages": anthropic_messages
+                }
+            else:
+                all_messages = [{"role": "system", "content": system_prompt_revision}]
+                all_messages.extend(context_messages)
+                all_messages.append({"role": "user", "content": revision_message})
+                
+                preview_api_request = {
+                    "model": model,
+                    "messages": all_messages,
+                    "temperature": temperature
+                }
+                
+            st.subheader("Предварительный просмотр API запроса:")
+            st.code(json.dumps(preview_api_request, indent=2, ensure_ascii=False), language="json")
+        
         if st.button("Применить правки"):
             with st.spinner("Генерация новой версии..."):
                 revised_story = generate_revision(
@@ -267,6 +395,11 @@ with tabs[2]:
                     st.success("Новая версия успешно сгенерирована!")
                     st.markdown("### Результат правки:")
                     st.markdown(revised_story["content"])
+                    
+                    # Отображение отправленного API запроса
+                    if st.checkbox("Показать отправленный API запрос", key="show_sent_revision"):
+                        st.subheader("Отправленный API запрос:")
+                        st.code(st.session_state.last_api_request, language="json")
                     
                     # Сброс выбранных историй после правки
                     st.session_state.selected_stories = [] 
